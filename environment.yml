@@ -15,6 +15,7 @@ dependencies:
 - numpy
 - pandas
 - pip
+- pillow<7
 - pytorch=1.4
 - python=3.6
 - scikit-learn

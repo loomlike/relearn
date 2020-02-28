@@ -5,5 +5,14 @@
 * pytorch 1.4 (cuda 10.1) and torchvision
 * openai gym
 
+## Setup
+```
+conda env create -f environment.yml
+conda activate relearn
+python -m ipykernel install --user --name relearn
+```
+
+
+
 
 
