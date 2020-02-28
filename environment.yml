@@ -1,7 +1,7 @@
 # Packages are ordered alphabetically
 # To install ipykernel:
 #     python -m ipykernel install --user --name rl
-name: rl
+name: relearn
 channels:
 - defaults
 - conda-forge
