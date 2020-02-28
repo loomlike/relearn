@@ -1,0 +1,30 @@
+# Packages are ordered alphabetically
+# To install ipykernel:
+#     python -m ipykernel install --user --name rl
+name: rl
+channels:
+- defaults
+- conda-forge
+- pytorch
+dependencies:
+- cudatoolkit=10.1
+- ipykernel
+- jupyter
+- jupyter_contrib_nbextensions
+- matplotlib
+- numpy
+- pandas
+- pip
+- pytorch=1.4
+- python=3.6
+- scikit-learn
+- scipy
+- seaborn
+- torchvision
+- tqdm
+- pip:
+  - black
+  - blackcellmagic
+  - gym
+  - requests
+  - yapf
