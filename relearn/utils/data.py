@@ -1,4 +1,5 @@
-# https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
+# From https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
+
 from collections import namedtuple
 
 
