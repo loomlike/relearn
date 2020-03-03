@@ -5,9 +5,12 @@ name: relearn
 channels:
 - defaults
 - conda-forge
+- gpytorch
 - pytorch
 dependencies:
+- botorch
 - cudatoolkit=10.1
+- gast==0.2.2
 - ipykernel
 - jupyter
 - jupyter_contrib_nbextensions
@@ -16,16 +19,21 @@ dependencies:
 - pandas
 - pip
 - pillow<7
+- plotly >=2.2.1
 - pytorch=1.4
-- python=3.6
+- python=3.7
 - scikit-learn
 - scipy
 - seaborn
 - torchvision
 - tqdm
 - pip:
+  - ax-platform
   - black
   - blackcellmagic
   - gym
+  - Jinja2
+  - ray
   - requests
-  - yapf
+  - stable-baselines
+  - tensorflow-gpu==1.14
