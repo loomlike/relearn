@@ -37,7 +37,8 @@ RUN mkdir ${HOME}/.jupyter && \
 RUN git clone --depth 1 --single-branch -b master https://github.com/loomlike/relearn
 
 # Install environment
-RUN conda env update -f relearn/environment.yml -n base && \
+RUN conda update -n base -c defaults conda && \
+    conda env update -f relearn/environment.yml -n base && \
     conda clean -fay && \
     python -m ipykernel install --user --name 'python3' --display-name 'python3'
 
