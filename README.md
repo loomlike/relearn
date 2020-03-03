@@ -2,7 +2,7 @@
 
 This repository contains the following examples:
 * Simple DQN (Deep Q Network) from [pytorch official page](https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html)
-* Stock price forecasting from https://github.com/notadamking/Stock-Trading-Environment
+* Stock price forecasting from https://github.com/AminHP/gym-anytrading
 * Inventory control from [https://github.com/ikatsov/tensor-house/](https://github.com/ikatsov/tensor-house/blob/master/supply-chain/supply-chain-reinforcement-learning.ipynb)
 
 

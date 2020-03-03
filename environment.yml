@@ -15,7 +15,7 @@ dependencies:
 - jupyter
 - jupyter_contrib_nbextensions
 - matplotlib
-- numpy
+- numpy==1.16.4
 - pandas
 - pip
 - pillow<7
@@ -33,7 +33,8 @@ dependencies:
   - blackcellmagic
   - gym
   - Jinja2
-  - ray
+  - ray[rllib]
   - requests
   - stable-baselines
+  - tabulate
   - tensorflow-gpu==1.14
