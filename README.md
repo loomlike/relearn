@@ -33,13 +33,26 @@ xvfb-run -s "-screen 0 640x480x24" jupyter notebook
 ```
 
 #### Docker
+
+**Prerequisite:** 
+To use GPU, install [nvidia-container-toolkit](https://github.com/NVIDIA/nvidia-docker) if haven't already done.
+```
+# Add the package repositories
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+```
+
+**Setup:**
 ```
 # pull the image
 sudo docker pull loomlike/relearn:gpu
 
 # start the container
-sudo docker run -p 8888:8888 loomlike/relearn:gpu
+sudo docker run --gpus all -p 8888:8888 loomlike/relearn:gpu
 
 # open http://localhost:8888 from your browser
 ```
-To use GPU, install [nvidia-container-toolkit](https://github.com/NVIDIA/nvidia-docker) if haven't already done, and use `--gpus all` flag.
