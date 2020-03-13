@@ -16,50 +16,59 @@ REGULAR_DELIVERY = DeliveryType(due=7, price=1/7, penalty=1/49)
 
 class Item:
     # Made static to refer the value before init
-    shape = 5
-    columns = ('time', 'dest', 'due', 'price', 'penalty') 
-    def __init__(self, t, dest, delivery_type):
+    columns = ('t', 'dest', 'due', 'price', 'penalty')
+    def __init__(self, t, dest, due, price, penalty):
         """
         Args:
             t (int): Ordered date (episode)
-            dest (int): Delivery destination index
-            delivery_type (DeliveryType): Delivery type
+            dest (int): Delivery destination id
+            due (int): Delivery due
+            price (float): Reward
+            penalty (float): Delay penalty per time unit
         """
         self.t = t
         self.dest = dest
-        self.delivery_type = delivery_type
+        self.due = due
+        self.price = price
+        self.penalty = penalty
 
     def to_array(self):
         return np.array([
             float(self.t),
-            self.dest,
-            float(self.delivery_type.due),
-            self.delivery_type.price,
-            self.delivery_type.penalty,
+            float(self.dest),
+            float(self.due),
+            self.price,
+            self.penalty,
         ])
 
 
 class Warehouse:
-    def __init__(self, capacity, delivery_map):
+    columns = Item.columns + ('dest_cost', 'dest_cap')
+    def __init__(self, capacity, delivery_capacities, delivery_costs):
         """Logistics provider's distribution center
 
         Args:
-            capacity (int): Warehouse capacity (the number of items)
-            delivery_map (np.array[int]): Delivery cost map where indices of the list
+            capacity (int): Warehouse capacity (the number of items).
+            delivery_capacities (np.array[int]): Number of items that can be delivered to each destination at a time.
+            delivery_costs (np.array[int]): Delivery cost to each destination.
                 are the destination codes and values are the delivery costs.
         """
+        assert len(delivery_capacities) == len(delivery_costs)
+
         self.capacity = capacity
-        self.delivery_map = delivery_map
-        
-        self.inventory = np.array([], dtype=object)
-        self.revenue = 0.0
-        self.cost = 0.0
+        self.shape = (capacity, len(Item.columns)+2)  # +2: cost, remaining delivery capacity
+
+        self.delivery_capacities = delivery_capacities
+        self.delivery_costs = delivery_costs
+
+        self.reset()
         
     def __len__(self):
         return len(self.inventory)
 
     def reset(self):
         self.inventory = np.array([], dtype=object)
+        self.dest_cnt = np.zeros(len(self.delivery_capacities), dtype=int)  
         self.revenue = 0.0
         self.cost = 0.0
 
@@ -80,8 +89,8 @@ class Warehouse:
         """
         delay_penalty = 0.0
         for item in self.inventory:
-            if (t-item.t) > item.delivery_type.due:
-                delay_penalty += item.delivery_type.penalty
+            if (t-item.t) > item.due:
+                delay_penalty += item.penalty
 
         self.cost += cost + delay_penalty
 
@@ -91,7 +100,13 @@ class Warehouse:
         if over > 0:
             items, failed = items[:-over], items[-over:]
 
+        # Items that actually are dispatched
+        for item in items:
+            self.dest_cnt[item.dest] += 1
         self.inventory = np.concatenate((self.inventory, items))
+
+        # Bug check. Maybe move to a test function later...
+        assert len(self.inventory) <= self.capacity
 
         return self.inventory, np.array(failed), delay_penalty
     
@@ -99,50 +114,57 @@ class Warehouse:
         """Deliver items to the final destinations.
         Args:
             item_ids (List[int]): The indices of the inventory items to deliver
-
-        TODO:
-            failed_ids (np.array[Item]): Item ids that failed to deliver because of the
-                lack of delivery capacity. These items will remain in the inventory.
-
+            
         Returns:
             inventory (np.array[Item]): Inventory items after delivery
+            failed_ids (np.array[Item]): Item ids that failed to deliver because of the
+                full delivery capacity. These items will remain in the inventory.
             revenue (float): Delivery revenue
             cost (float): Delivery cost 
         """
-        # Get item ids in the inventory
+        # Get valid item ids (i.e. get items in the inventory)
         item_ids = np.array(item_ids)
         item_ids = item_ids[item_ids < len(self.inventory)]
-        # Select item ids by delivery capacity
-        # item_ids, failed_ids = item_ids[:self.delivery_capacity], item_ids[-self.delivery_capacity:]
-
-        delivery = self.inventory[item_ids]
-        self.inventory = np.delete(self.inventory, item_ids)
 
         # Calculate the revenue and cost from this delivery
         revenue = 0.0
-        dest = set()
-        for item in delivery:
-            revenue += item.delivery_type.price
-            dest.add(item.dest)
-            
-        # In current implementation, we ship the items of the same destination together. 
-        cost = np.sum(self.delivery_map[list(dest)])
-        
+        delivered_ids = []
+        failed_ids = []
+        item_cnt = {}  # Number of items in a truck for each destination
+        for i in item_ids:
+            item = self.inventory[i]
+            if item_cnt.get(item.dest, 0) > self.delivery_capacities[item.dest]:
+                # The truck is full
+                failed_ids.append(i)
+            else:
+                # Get the item from inventory and load into the truck
+                self.dest_cnt[item.dest] -= 1
+                item_cnt[item.dest] = item_cnt.get(item.dest, 0) + 1
+                delivered_ids.append(i)
+
+                revenue += item.price
+
+        # Update inventory after the delivery
+        self.inventory = np.delete(self.inventory, delivered_ids)
+       
+        cost = np.sum(self.delivery_costs[list(item_cnt.keys())]) 
         self.revenue += revenue
         self.cost += cost
         
-        return self.inventory, revenue, cost
+        return self.inventory, failed_ids, revenue, cost
 
     def to_array(self):
-        """Return as np.array"""
-        if len(self.inventory) == 0:
-            return np.array([])
+        state = np.array([
+            np.concatenate([
+                item.to_array(), [
+                    self.delivery_costs[item.dest],
+                    # Remaining delivery capacity of each destination
+                    self.delivery_capacities[item.dest]-self.dest_cnt[item.dest]
+                ]
+            ]) for item in self.inventory
+        ])
 
-        state = np.array([item.to_array() for item in self.inventory])
-
-        if len(self.inventory) > self.capacity:
-            state = state[:self.capacity]
-        elif len(self.inventory) < self.capacity:
+        if len(self.inventory) < self.capacity:
             state = np.pad(
                 state,
                 ((0,self.capacity-len(self.inventory)),(0,0)),
@@ -157,18 +179,22 @@ class SimpleLogistics(gym.Env):
         self,
         T=10,
         capacity=100,
-        num_locations=10,
-        demand_fn=None,
+        delivery_capacity=5,
+        num_destinations=10,
+        demand_fn=20,
         seed=None,
     ):
-        """TODO: Environment description here
+        """Logistics provider's item delivery simulation environment.
+        Items are dispatched from arbitrary sellers to a warehouse and
+        delivered to their destinations.
+
         Args:
-            T (int): Maximum number of episodes
-            capacity (int): Capacity of the warehouse
-            num_locations (int): Number of locations to deliver items.
-                Note - this is not the number of warehouses.
-            demand_fn (callable): Demand generation function which returns the number
-                of items (int). By default, we use Poisson(num_locations*2).
+            T (int): Maximum number of episodes.
+            capacity (int): Number of items that can be stored at the warehouse.
+            delivery_capacity (int): Number of items that can be delivered to a destination at once.
+            num_destinations (int): Number of locations this warehouse cover for delivery.
+            demand_fn (Union[callable, int]): Demand generation function which returns the number of items.
+                If an integer n is provided, use Poisson(n).
             seed (int): Random number seed
         """
         
@@ -179,18 +205,20 @@ class SimpleLogistics(gym.Env):
             random.seed(seed)
             np.random.seed(seed)
 
-        delivery_map = np.random.rand(num_locations)
-        self.warehouse = Warehouse(capacity, delivery_map)
+        # Randomly initialize delivery cost to the destinations
+        delivery_costs = np.random.rand(num_destinations)
+        delivery_capacities = np.full(num_destinations, delivery_capacity)
+        self.warehouse = Warehouse(capacity, delivery_capacities, delivery_costs)
 
         self.demand_fn = demand_fn
-        
-        # Action space: deliver n-th item or not
+
+        # Action space: deliver n-th item or not TODO change to consider delivery-capacity
         self.action_space = spaces.MultiBinary(capacity)
         # Agent maps observations to actions to maximize reward
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(capacity, Item.shape),
+            shape=self.warehouse.shape,
             dtype=np.float32
         )
         
@@ -218,21 +246,26 @@ class SimpleLogistics(gym.Env):
         
         return pd.DataFrame(
             data=self.warehouse.to_array(),
-            columns=Item.columns
+            columns=Warehouse.columns
         )
         
     def demand(self):
         """Generate item demands based on `demand_fn`"""
-        if self.demand_fn is not None:
+        if isinstance(self.demand_fn, int):
+            num_items = np.random.poisson(self.demand_fn)
+        elif callable(self.demand_fn):
             num_items = self.demand_fn()
         else:
-            num_items = np.random.poisson(len(self.warehouse.delivery_map)*2)
+            raise ValueError("demand_fn should be a callable or an integer.")
 
+        delivery_type = random.choice(self.delivery_types)
         return [
             Item(
                 t=self.t,
-                dest=random.randint(0, len(self.warehouse.delivery_map)-1),
-                delivery_type=random.choice(self.delivery_types)
+                dest=random.randint(0, len(self.warehouse.delivery_costs)-1),
+                due=delivery_type.due,
+                price=delivery_type.price,
+                penalty=delivery_type.penalty,
             ) for _ in range(num_items)
         ]
     
@@ -252,7 +285,7 @@ class SimpleLogistics(gym.Env):
         self.t += 1
         
         # update state
-        _, revenue, cost = self.warehouse.deliver(np.nonzero(action))
+        _, failed_ids, revenue, cost = self.warehouse.deliver(np.nonzero(action))
         _, failed, penalty = self.warehouse.dispatch(self.t, self.demand())
 
         total_revenue = self.warehouse.revenue
@@ -268,6 +301,7 @@ class SimpleLogistics(gym.Env):
             "total_cost": total_cost,
             "num_items_in_inventory": len(self.warehouse),
             "num_items_failed_to_dispatch": len(failed),
+            "num_items_failed_to_deliver": len(failed_ids),
         }
         
         return self.warehouse.to_array(), reward, self.t==self.T, info
