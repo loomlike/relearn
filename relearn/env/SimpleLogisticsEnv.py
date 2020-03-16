@@ -127,7 +127,7 @@ class Warehouse:
             if i not in item_set:
                 item_set.add(i)
                 ids.append(i)
-        item_ids = np.array(ids)
+        item_ids = np.array(ids, dtype=int)
 
         # Get valid item ids (i.e. get items in the inventory)
         item_ids = item_ids[
