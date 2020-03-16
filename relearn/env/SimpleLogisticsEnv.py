@@ -17,20 +17,18 @@ REGULAR_DELIVERY = DeliveryType(due=7, price=1/7, penalty=1/49)
 class Item:
     # Made static to refer the value before init
     columns = ('t', 'dest', 'due', 'price', 'penalty')
-    def __init__(self, t, dest, due, price, penalty):
+    def __init__(self, t, dest, delivery_type):
         """
         Args:
             t (int): Ordered date (episode)
             dest (int): Delivery destination id
-            due (int): Delivery due
-            price (float): Reward
-            penalty (float): Delay penalty per time unit
+            delivery_type (DeliveryType): Delivery type including due, price, and penalty
         """
         self.t = t
         self.dest = dest
-        self.due = due
-        self.price = price
-        self.penalty = penalty
+        self.due = delivery_type.due
+        self.price = delivery_type.price
+        self.penalty = delivery_type.penalty
 
     def to_array(self):
         return np.array([
@@ -122,9 +120,19 @@ class Warehouse:
             revenue (float): Delivery revenue
             cost (float): Delivery cost 
         """
+        # Remove duplicate while keep the original order
+        item_set = set()
+        ids = []
+        for i in item_ids:
+            if i not in item_set:
+                item_set.add(i)
+                ids.append(i)
+        item_ids = np.array(ids)
+
         # Get valid item ids (i.e. get items in the inventory)
-        item_ids = np.array(item_ids)
-        item_ids = item_ids[item_ids < len(self.inventory)]
+        item_ids = item_ids[
+            (item_ids>=0) & (item_ids<len(self.inventory))    
+        ]
 
         # Calculate the revenue and cost from this delivery
         revenue = 0.0
@@ -212,8 +220,14 @@ class SimpleLogistics(gym.Env):
 
         self.demand_fn = demand_fn
 
-        # Action space: deliver n-th item or not TODO change to consider delivery-capacity
-        self.action_space = spaces.MultiBinary(capacity)
+        # action: list of item indices to deliver in the warehouse 
+        self.action_space = spaces.Box(
+            low=-1,
+            high=capacity-1,
+            shape=(capacity,),
+            dtype=np.int
+        )
+        
         # Agent maps observations to actions to maximize reward
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -240,14 +254,27 @@ class SimpleLogistics(gym.Env):
         
         return self.warehouse.to_array()
 
-    def render(self):
-        # TODO maybe render historical data as well based on the parameter
-        # TODO choose between graph and array based on the parameter
+    def render(self, mode='array'):
+        """Render environment state
         
-        return pd.DataFrame(
-            data=self.warehouse.to_array(),
-            columns=Warehouse.columns
-        )
+        Args:
+            mode (str): One of ('array', 'df', 'plt').
+        
+        Returns:
+            (object): Environment state, either np.array, pd.DataFrame,
+                or matplotlib.plt.figure depending on the mode.
+        """
+        if mode == 'array':
+            return self.warehouse.to_array()
+        elif mode == 'df':    
+            return pd.DataFrame(
+                data=self.warehouse.to_array(),
+                columns=Warehouse.columns
+            )
+        elif mode == 'plt':
+            raise NotImplementedError("this is TODO")
+        else:
+            raise ValueError("Unknown mode: {}".format(mode))
         
     def demand(self):
         """Generate item demands based on `demand_fn`"""
@@ -258,14 +285,11 @@ class SimpleLogistics(gym.Env):
         else:
             raise ValueError("demand_fn should be a callable or an integer.")
 
-        delivery_type = random.choice(self.delivery_types)
         return [
             Item(
                 t=self.t,
                 dest=random.randint(0, len(self.warehouse.delivery_costs)-1),
-                due=delivery_type.due,
-                price=delivery_type.price,
-                penalty=delivery_type.penalty,
+                delivery_type=random.choice(self.delivery_types),
             ) for _ in range(num_items)
         ]
     
@@ -273,8 +297,7 @@ class SimpleLogistics(gym.Env):
         """Update the environment based on the agent step and return a reward.
         
         Args:
-            action (List[int]): Agent action for the items in the inventory.
-                E.g., deliver ith item if action[i] == 1
+            action (List[int]): List of item indices to deliver in the warehouse.
             
         Returns:
             state
@@ -285,7 +308,7 @@ class SimpleLogistics(gym.Env):
         self.t += 1
         
         # update state
-        _, failed_ids, revenue, cost = self.warehouse.deliver(np.nonzero(action))
+        _, failed_ids, revenue, cost = self.warehouse.deliver(action)
         _, failed, penalty = self.warehouse.dispatch(self.t, self.demand())
 
         total_revenue = self.warehouse.revenue
