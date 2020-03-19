@@ -1,5 +1,3 @@
-# TODO implement np.array interface into dispatch and delivery for efficiency
-
 from collections import namedtuple
 import random
 
@@ -20,7 +18,7 @@ class Item:
     def __init__(self, t, dest, delivery_type):
         """
         Args:
-            t (int): Ordered date (episode)
+            t (int): Item order time (step)
             dest (int): Delivery destination id
             delivery_type (DeliveryType): Delivery type including due, price, and penalty
         """
@@ -41,7 +39,8 @@ class Item:
 
 
 class Warehouse:
-    columns = Item.columns + ('dest_cost', 'dest_cap')
+    columns = Item.columns + ('dest_cost', 'dest_cap', 't_left')
+
     def __init__(self, capacity, delivery_capacities, delivery_costs):
         """Logistics provider's distribution center
 
@@ -54,8 +53,7 @@ class Warehouse:
         assert len(delivery_capacities) == len(delivery_costs)
 
         self.capacity = capacity
-        self.shape = (capacity, len(Item.columns)+2)  # +2: cost, remaining delivery capacity
-
+        self.shape = (capacity, len(Warehouse.columns))
         self.delivery_capacities = delivery_capacities
         self.delivery_costs = delivery_costs
 
@@ -65,17 +63,21 @@ class Warehouse:
         return len(self.inventory)
 
     def reset(self):
+        self.t = 0  # date (step)
         self.inventory = np.array([], dtype=object)
-        self.dest_cnt = np.zeros(len(self.delivery_capacities), dtype=int)  
         self.revenue = 0.0
         self.cost = 0.0
 
-    def dispatch(self, t, items, cost=1.0):
+    def update(self):
+        """Update inventory status.
+        """
+        self.t += 1
+
+    def dispatch(self, items, cost=1.0):
         """Dispatch items from sellers to the logistics provider's warehouse.
         Also check the delivery date of the inventory items for the delay penalty.
         
         Args:
-            t (int): Current date (episode)
             items (List[Item]): List of items
             cost (float): Dispatch cost
         
@@ -87,7 +89,7 @@ class Warehouse:
         """
         delay_penalty = 0.0
         for item in self.inventory:
-            if (t-item.t) > item.due:
+            if (self.t-item.t) > item.due:
                 delay_penalty += item.penalty
 
         self.cost += cost + delay_penalty
@@ -99,8 +101,6 @@ class Warehouse:
             items, failed = items[:-over], items[-over:]
 
         # Items that actually are dispatched
-        for item in items:
-            self.dest_cnt[item.dest] += 1
         self.inventory = np.concatenate((self.inventory, items))
 
         # Bug check. Maybe move to a test function later...
@@ -108,11 +108,14 @@ class Warehouse:
 
         return self.inventory, np.array(failed), delay_penalty
     
-    def deliver(self, item_ids):
+    def deliver(self, p):
         """Deliver items to the final destinations.
+        
         Args:
-            item_ids (List[int]): The indices of the inventory items to deliver
-            
+            p (List[float]): Probability of delivery for each item in the warehouse.
+                E.g., [0.6, 0.9, 0.2] -> Deliver [item_1, item_0] (ordered by the probability)
+                and not deliver [item_2], where the threshold is 0.5.
+
         Returns:
             inventory (np.array[Item]): Inventory items after delivery
             failed_ids (np.array[Item]): Item ids that failed to deliver because of the
@@ -120,36 +123,29 @@ class Warehouse:
             revenue (float): Delivery revenue
             cost (float): Delivery cost 
         """
-        # Remove duplicate while keep the original order
-        item_set = set()
-        ids = []
-        for i in item_ids:
-            if i not in item_set:
-                item_set.add(i)
-                ids.append(i)
-        item_ids = np.array(ids, dtype=int)
-
-        # Get valid item ids (i.e. get items in the inventory)
-        item_ids = item_ids[
-            (item_ids>=0) & (item_ids<len(self.inventory))    
-        ]
+        # Sort by the probabilities
+        i_p = list(zip(range(len(p)), p))
+        i_p.sort(key=lambda x: -x[1])
 
         # Calculate the revenue and cost from this delivery
         revenue = 0.0
         delivered_ids = []
         failed_ids = []
-        item_cnt = {}  # Number of items in a truck for each destination
-        for i in item_ids:
+        item_cnt = {}  # Number of items for each destination
+        for i, p in i_p:
+            if p < 0.5:
+                break
+            if i >= len(self.inventory):
+                continue 
+
             item = self.inventory[i]
             if item_cnt.get(item.dest, 0) > self.delivery_capacities[item.dest]:
                 # The truck is full
                 failed_ids.append(i)
             else:
                 # Get the item from inventory and load into the truck
-                self.dest_cnt[item.dest] -= 1
                 item_cnt[item.dest] = item_cnt.get(item.dest, 0) + 1
                 delivered_ids.append(i)
-
                 revenue += item.price
 
         # Update inventory after the delivery
@@ -162,12 +158,20 @@ class Warehouse:
         return self.inventory, failed_ids, revenue, cost
 
     def to_array(self):
+        """TODO adding dest_cost, dest_cap, t_left here is bug prone. Need refactor
+        """
+        # Remaining delivery capacity
+        dest_cap = list(self.delivery_capacities)
+        for item in self.inventory:
+            dest_cap[item.dest] -= 1
+
         state = np.array([
+            # Append ('dest_cost', 'dest_cap')
             np.concatenate([
                 item.to_array(), [
                     self.delivery_costs[item.dest],
-                    # Remaining delivery capacity of each destination
-                    self.delivery_capacities[item.dest]-self.dest_cnt[item.dest]
+                    dest_cap[item.dest],
+                    item.due-(self.t-item.t)
                 ]
             ]) for item in self.inventory
         ])
@@ -197,7 +201,7 @@ class SimpleLogistics(gym.Env):
         delivered to their destinations.
 
         Args:
-            T (int): Maximum number of episodes.
+            T (int): Maximum number of steps to run. I.e. steps per episode.
             capacity (int): Number of items that can be stored at the warehouse.
             delivery_capacity (int): Number of items that can be delivered to a destination at once.
             num_destinations (int): Number of locations this warehouse cover for delivery.
@@ -207,7 +211,6 @@ class SimpleLogistics(gym.Env):
         """
         
         self.T = T
-        self.t = 0  # Current time. Increase for each step.
         
         if seed is not None:
             random.seed(seed)
@@ -220,12 +223,12 @@ class SimpleLogistics(gym.Env):
 
         self.demand_fn = demand_fn
 
-        # action: list of item indices to deliver in the warehouse 
+        # action: list of probabilities of delivery for the items
         self.action_space = spaces.Box(
-            low=-1,
-            high=capacity-1,
+            low=0.0,
+            high=1.0,
             shape=(capacity,),
-            dtype=np.int
+            dtype=np.float32
         )
         
         # Agent maps observations to actions to maximize reward
@@ -241,16 +244,14 @@ class SimpleLogistics(gym.Env):
 
         self.reset()
         
-    def reset(self, seed=None):
-        self.t = 0
-        
+    def reset(self, seed=None):        
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
         
         self.warehouse.reset()
         # Initial inventory
-        self.warehouse.dispatch(self.t, self.demand())
+        self.warehouse.dispatch(self.demand())
         
         return self.warehouse.to_array()
 
@@ -272,7 +273,7 @@ class SimpleLogistics(gym.Env):
                 columns=Warehouse.columns
             )
         elif mode == 'plt':
-            raise NotImplementedError("this is TODO")
+            raise NotImplementedError("TODO")
         else:
             raise ValueError("Unknown mode: {}".format(mode))
         
@@ -287,7 +288,7 @@ class SimpleLogistics(gym.Env):
 
         return [
             Item(
-                t=self.t,
+                t=self.warehouse.t,
                 dest=random.randint(0, len(self.warehouse.delivery_costs)-1),
                 delivery_type=random.choice(self.delivery_types),
             ) for _ in range(num_items)
@@ -297,7 +298,7 @@ class SimpleLogistics(gym.Env):
         """Update the environment based on the agent step and return a reward.
         
         Args:
-            action (List[int]): List of item indices to deliver in the warehouse.
+            action (List[float]): List of probabilities to deliver the items in the warehouse.
             
         Returns:
             state
@@ -305,11 +306,12 @@ class SimpleLogistics(gym.Env):
             done
             info
         """
-        self.t += 1
-        
+        # t += 1
+        self.warehouse.update()
+
         # update state
         _, failed_ids, revenue, cost = self.warehouse.deliver(action)
-        _, failed, penalty = self.warehouse.dispatch(self.t, self.demand())
+        _, failed, penalty = self.warehouse.dispatch(self.demand())
 
         total_revenue = self.warehouse.revenue
         total_cost = self.warehouse.cost
@@ -317,7 +319,7 @@ class SimpleLogistics(gym.Env):
         reward = total_revenue - total_cost
 
         info = {
-            "episode": self.t,
+            "t": self.warehouse.t,
             "revenue": revenue,
             "penalty_and_cost": penalty+cost,
             "total_revenue": total_revenue,
@@ -327,4 +329,4 @@ class SimpleLogistics(gym.Env):
             "num_items_failed_to_deliver": len(failed_ids),
         }
         
-        return self.warehouse.to_array(), reward, self.t==self.T, info
+        return self.warehouse.to_array(), reward, self.warehouse.t==self.T, info

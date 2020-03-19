@@ -35,6 +35,6 @@ dependencies:
   - Jinja2
   - ray[rllib]
   - requests
-  - stable-baselines
+  - stable-baselines[mpi]
   - tabulate
   - tensorflow-gpu==1.14
